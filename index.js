@@ -20,6 +20,46 @@ app.use(
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Função com retry logic
+async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 2000) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Tentativa ${attempt}/${maxRetries} para: ${url}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s por tentativa
+
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        return response;
+      }
+
+      console.warn(
+        `⚠️ Tentativa ${attempt} falhou com status: ${response.status}`
+      );
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ Tentativa ${attempt} falhou:`, error.message);
+
+      if (attempt < maxRetries) {
+        const delay = baseDelay * attempt;
+        console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error(`Todas as ${maxRetries} tentativas falharam`);
+}
+
 // Health check
 app.get("/", (req, res) => {
   res.json({
@@ -40,7 +80,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// 3. ROTA COMPLETA CORRIGIDA (TOKEN + BUSCA)
+// 3. ROTA COMPLETA COM RETRY LOGIC
 app.post("/api/complete-search", async (req, res) => {
   let tokenAcquisitionSuccess = false;
 
@@ -74,7 +114,7 @@ app.post("/api/complete-search", async (req, res) => {
       });
     }
 
-    // 1. Obter token diretamente
+    // 1. Obter token diretamente com retry
     console.log("🔄 Obtendo token...");
     const searchUrl = `https://www.latamairlines.com/br/pt/oferta-voos?origin=${origin}&outbound=${outbound}T00:00:00.000Z&destination=${destination}&inbound=${
       inbound || outbound
@@ -89,14 +129,23 @@ app.post("/api/complete-search", async (req, res) => {
       "Accept-Encoding": "gzip, deflate, br",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
+      Referer: "https://www.latamairlines.com/br/pt",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "same-origin",
     };
 
     console.log("📨 Buscando token na URL:", searchUrl);
-    const htmlResponse = await fetch(searchUrl, {
-      method: "GET",
-      headers: htmlHeaders,
-      timeout: 30000,
-    });
+
+    const htmlResponse = await fetchWithRetry(
+      searchUrl,
+      {
+        method: "GET",
+        headers: htmlHeaders,
+      },
+      3,
+      2000
+    );
 
     console.log("📊 Status da resposta do token:", htmlResponse.status);
 
@@ -127,11 +176,27 @@ app.post("/api/complete-search", async (req, res) => {
         "❌ Token não encontrado no HTML. Padrões testados:",
         tokenPatterns.length
       );
-      // Salvar um trecho do HTML para debug (apenas em desenvolvimento)
-      if (process.env.NODE_ENV !== "production") {
-        console.log("📄 Trecho do HTML para debug:", html.substring(0, 1000));
-      }
-      throw new Error("Token de busca não encontrado na resposta da LATAM");
+
+      // Debug: verificar se a página carregou corretamente
+      const hasCaptcha =
+        html.includes("captcha") ||
+        html.includes("robot") ||
+        html.includes("Cloudflare");
+      const hasError =
+        html.includes("error") ||
+        html.includes("manutenção") ||
+        html.includes("maintenance");
+
+      console.log("🔍 Análise do HTML:", {
+        length: html.length,
+        hasCaptcha,
+        hasError,
+        title: html.match(/<title>(.*?)<\/title>/)?.[1] || "Não encontrado",
+      });
+
+      throw new Error(
+        "Token de busca não encontrado na resposta da LATAM. Possível bloqueio."
+      );
     }
 
     tokenAcquisitionSuccess = true;
@@ -182,11 +247,15 @@ app.post("/api/complete-search", async (req, res) => {
     };
 
     console.log("📨 Buscando ofertas na API LATAM...");
-    const apiResponse = await fetch(offersUrl, {
-      method: "GET",
-      headers: apiHeaders,
-      timeout: 30000,
-    });
+    const apiResponse = await fetchWithRetry(
+      offersUrl,
+      {
+        method: "GET",
+        headers: apiHeaders,
+      },
+      2,
+      1000
+    );
 
     console.log("📊 Status da API LATAM:", apiResponse.status);
 
@@ -217,13 +286,19 @@ app.post("/api/complete-search", async (req, res) => {
   } catch (error) {
     console.error("💥 Erro na busca completa:", error);
 
-    const errorMessage = tokenAcquisitionSuccess
-      ? `Erro na busca de voos: ${error.message}`
-      : `Erro ao obter token: ${error.message}`;
+    const errorType =
+      error.name === "AbortError"
+        ? "TIMEOUT"
+        : error.message.includes("network")
+        ? "NETWORK_ERROR"
+        : "API_ERROR";
+
+    const errorMessage = `Erro ${errorType}: ${error.message}`;
 
     res.status(500).json({
       success: false,
       error: errorMessage,
+      errorType,
       tokenAcquired: tokenAcquisitionSuccess,
     });
   }
