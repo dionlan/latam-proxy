@@ -188,44 +188,130 @@ app.post("/api/search-flights", async (req, res) => {
   }
 });
 
-// 3. ROTA COMPLETA (TOKEN + BUSCA)
+// 3. ROTA COMPLETA CORRIGIDA (TOKEN + BUSCA)
 app.post("/api/complete-search", async (req, res) => {
   try {
-    const searchParams = req.body;
-    console.log("🚀 Iniciando busca completa...", searchParams);
+    const {
+      origin,
+      destination,
+      outbound,
+      inbound,
+      adults = 1,
+      children = 0,
+      babies = 0,
+    } = req.body;
 
-    // 1. Obter token
-    const tokenResponse = await fetch(
-      `http://localhost:${PORT}/api/get-token`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(searchParams),
-      }
-    );
+    console.log("🚀 Iniciando busca completa...", {
+      origin,
+      destination,
+      outbound,
+      inbound,
+    });
 
-    const tokenResult = await tokenResponse.json();
+    // 1. Obter token diretamente (sem chamada interna)
+    console.log("🔄 Obtendo token...");
+    const searchUrl = `https://www.latamairlines.com/br/pt/oferta-voos?origin=${origin}&outbound=${outbound}T00:00:00.000Z&destination=${destination}&inbound=${inbound}T00:00:00.000Z&adt=${adults}&chd=${children}&inf=${babies}&trip=RT&cabin=Economy&sort=RECOMMENDED`;
 
-    if (!tokenResult.success) {
-      throw new Error(`Falha ao obter token: ${tokenResult.error}`);
+    const htmlHeaders = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    };
+
+    const htmlResponse = await fetch(searchUrl, {
+      method: "GET",
+      headers: htmlHeaders,
+      timeout: 30000,
+    });
+
+    if (!htmlResponse.ok) {
+      throw new Error(`HTTP ${htmlResponse.status} - Falha ao obter token`);
     }
 
+    const html = await htmlResponse.text();
+    const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
+
+    if (!tokenMatch || !tokenMatch[1]) {
+      throw new Error("Token não encontrado no HTML");
+    }
+
+    const searchToken = tokenMatch[1];
+    console.log("✅ Token obtido:", searchToken.substring(0, 50) + "...");
+
     // 2. Buscar voos com o token
-    const flightsResponse = await fetch(
-      `http://localhost:${PORT}/api/search-flights`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...searchParams,
-          searchToken: tokenResult.token,
-        }),
-      }
+    console.log("✈️ Buscando voos...");
+    const offersUrl = `https://www.latamairlines.com/bff/air-offers/v2/offers/search?outFrom=${outbound}&outFlightDate=null&inOfferId=null&redemption=false&adult=${adults}&infant=${babies}&child=${children}&inFlightDate=null&inFrom=${inbound}&origin=${origin}&destination=${destination}&sort=RECOMMENDED&outOfferId=null&cabinType=Economy`;
+
+    const sessionId = uuidv4();
+    const requestId = uuidv4();
+    const trackId = uuidv4();
+    const expId = uuidv4();
+
+    const apiHeaders = {
+      accept: "application/json, text/plain, */*",
+      "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      priority: "u=1, i",
+      referer: `https://www.latamairlines.com/br/pt/oferta-voos?origin=${origin}&outbound=${outbound}T00:00:00.000Z&destination=${destination}&inbound=${inbound}T00:00:00.000Z&adt=${adults}&chd=${children}&inf=${babies}&trip=RT&cabin=Economy&redemption=false&sort=RECOMMENDED&exp_id=${expId}`,
+      "sec-ch-ua":
+        '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "x-latam-action-name": "search-result.flightselection.offers-search",
+      "x-latam-app-session-id": sessionId,
+      "x-latam-application-country": "BR",
+      "x-latam-application-lang": "pt",
+      "x-latam-application-name": "web-air-offers",
+      "x-latam-application-oc": "br",
+      "x-latam-client-name": "web-air-offers",
+      "x-latam-device-width": "1746",
+      "x-latam-request-id": requestId,
+      "x-latam-search-token": searchToken,
+      "x-latam-track-id": trackId,
+      "Cache-Control": "no-cache",
+    };
+
+    const apiResponse = await fetch(offersUrl, {
+      method: "GET",
+      headers: apiHeaders,
+      timeout: 30000,
+    });
+
+    console.log("📊 Status da API Latam:", apiResponse.status);
+
+    if (!apiResponse.ok) {
+      const errorText = await apiResponse.text();
+      console.error("❌ Erro na API Latam:", apiResponse.status, errorText);
+      throw new Error(`API Latam retornou erro ${apiResponse.status}`);
+    }
+
+    const data = await apiResponse.json();
+    console.log(
+      "✅ Busca completa finalizada. Voos encontrados:",
+      data.content?.length || 0
     );
 
-    const flightsResult = await flightsResponse.json();
-
-    res.json(flightsResult);
+    res.json({
+      success: true,
+      data: data,
+      metadata: {
+        origin,
+        destination,
+        outbound,
+        inbound,
+        totalFlights: data.content?.length || 0,
+        timestamp: new Date().toISOString(),
+      },
+    });
   } catch (error) {
     console.error("💥 Erro na busca completa:", error);
     res.status(500).json({
@@ -237,7 +323,7 @@ app.post("/api/complete-search", async (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Railway API rodando na porta ${PORT}`);
-  console.log(`📌 Endpoints:`);
+  console.log(`📌 Endpoints disponíveis:`);
   console.log(`   → POST /api/get-token`);
   console.log(`   → POST /api/search-flights`);
   console.log(`   → POST /api/complete-search`);
