@@ -43,8 +43,16 @@ app.get("/api/test-direct", async (req, res) => {
     // Se chegou aqui, deu 200!
     const html = await latamResponse.text();
 
+    res.json({
+      html: html,
+    });
+
     // Extrair o token usando regex
     const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
+
+    res.json({
+      tokenMatch: tokenMatch,
+    });
 
     let tokenValue = null;
     if (tokenMatch && tokenMatch[1]) {
