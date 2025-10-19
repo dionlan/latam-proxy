@@ -1,34 +1,50 @@
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares
 app.use(cors());
-app.use(express.json({ limit: "50mb" })); // Aumenta limite para HTML grande
+app.use(express.json({ limit: "50mb" }));
 
-// Health check endpoint
+// Health check
 app.get("/", (req, res) => {
   res.json({
     status: "online",
-    service: "Latam HTML Extractor",
+    service: "Latam Flight Search API",
     timestamp: new Date().toISOString(),
   });
 });
 
-// ROTA PRINCIPAL: Retorna HTML completo
-app.get("/api/test-direct", async (req, res) => {
+// 1. ROTA PARA OBTER TOKEN
+app.post("/api/get-token", async (req, res) => {
   try {
-    console.log("🔍 Buscando HTML completo da Latam...");
+    const {
+      origin,
+      destination,
+      outbound,
+      inbound,
+      adults = 1,
+      children = 0,
+      babies = 0,
+    } = req.body;
 
-    // URL fixa para teste
-    const latamUrl =
-      "https://www.latamairlines.com/br/pt/oferta-voos?origin=BSB&outbound=2025-11-17T00%3A00%3A00.000Z&destination=GRU&inbound=2025-11-21T00%3A00%3A00.000Z&adt=1&chd=0&inf=0&trip=RT&cabin=Economy&sort=RECOMMENDED";
+    console.log("🔄 Obtendo token para:", {
+      origin,
+      destination,
+      outbound,
+      inbound,
+    });
+
+    // Construir URL da página HTML
+    const searchUrl = `https://www.latamairlines.com/br/pt/oferta-voos?origin=${origin}&outbound=${outbound}T00:00:00.000Z&destination=${destination}&inbound=${inbound}T00:00:00.000Z&adt=${adults}&chd=${children}&inf=${babies}&trip=RT&cabin=Economy&sort=RECOMMENDED`;
 
     const headers = {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       Accept:
         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
       "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -37,120 +53,192 @@ app.get("/api/test-direct", async (req, res) => {
       Pragma: "no-cache",
     };
 
-    console.log("📨 Fazendo requisição para:", latamUrl);
-
-    const latamResponse = await fetch(latamUrl, {
+    console.log("📨 Buscando HTML para extrair token...");
+    const response = await fetch(searchUrl, {
       method: "GET",
       headers: headers,
       timeout: 30000,
     });
 
-    console.log("📊 Status da resposta:", latamResponse.status);
-
-    if (!latamResponse.ok) {
-      const errorText = await latamResponse.text();
-      console.error("❌ Erro Latam:", latamResponse.status);
-
-      return res.status(latamResponse.status).json({
-        error: `Latam retornou erro ${latamResponse.status}`,
-        details: errorText.substring(0, 500),
-      });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} - ${await response.text()}`);
     }
 
-    // Obter HTML completo
-    const html = await latamResponse.text();
-
-    console.log("✅ HTML obtido! Tamanho:", html.length, "caracteres");
-    console.log("🔍 Procurando por searchToken...");
-
-    // Verificar se tem token
-    const hasSearchToken = html.includes("searchToken");
+    const html = await response.text();
     const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
-    const token = tokenMatch ? tokenMatch[1] : null;
 
-    console.log("🔑 SearchToken encontrado:", hasSearchToken);
-    if (token) {
-      console.log("✅ Token:", token.substring(0, 50) + "...");
+    if (!tokenMatch || !tokenMatch[1]) {
+      throw new Error("Token não encontrado no HTML");
     }
 
-    // ✅ RETORNA APENAS ESTE JSON - HTML COMPLETO
+    const token = tokenMatch[1];
+    console.log("✅ Token obtido:", token.substring(0, 50) + "...");
+
     res.json({
-      html: html,
+      success: true,
+      token: token,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao obter token:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// 2. ROTA PARA BUSCAR VOOS COM TOKEN
+app.post("/api/search-flights", async (req, res) => {
+  try {
+    const {
+      origin,
+      destination,
+      outbound,
+      inbound,
+      adults = 1,
+      children = 0,
+      babies = 0,
+      searchToken,
+    } = req.body;
+
+    console.log("✈️ Buscando voos com token...", {
+      origin,
+      destination,
+      outbound,
+      inbound,
+    });
+
+    if (!searchToken) {
+      throw new Error("Token de busca é obrigatório");
+    }
+
+    // Construir URL da API Latam
+    const offersUrl = `https://www.latamairlines.com/bff/air-offers/v2/offers/search?outFrom=${outbound}&outFlightDate=null&inOfferId=null&redemption=false&adult=${adults}&infant=${babies}&child=${children}&inFlightDate=null&inFrom=${inbound}&origin=${origin}&destination=${destination}&sort=RECOMMENDED&outOfferId=null&cabinType=Economy`;
+
+    const sessionId = uuidv4();
+    const requestId = uuidv4();
+    const trackId = uuidv4();
+    const expId = uuidv4();
+
+    const headers = {
+      accept: "application/json, text/plain, */*",
+      "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      priority: "u=1, i",
+      referer: `https://www.latamairlines.com/br/pt/oferta-voos?origin=${origin}&outbound=${outbound}T00:00:00.000Z&destination=${destination}&inbound=${inbound}T00:00:00.000Z&adt=${adults}&chd=${children}&inf=${babies}&trip=RT&cabin=Economy&redemption=false&sort=RECOMMENDED&exp_id=${expId}`,
+      "sec-ch-ua":
+        '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "x-latam-action-name": "search-result.flightselection.offers-search",
+      "x-latam-app-session-id": sessionId,
+      "x-latam-application-country": "BR",
+      "x-latam-application-lang": "pt",
+      "x-latam-application-name": "web-air-offers",
+      "x-latam-application-oc": "br",
+      "x-latam-client-name": "web-air-offers",
+      "x-latam-device-width": "1746",
+      "x-latam-request-id": requestId,
+      "x-latam-search-token": searchToken,
+      "x-latam-track-id": trackId,
+      "Cache-Control": "no-cache",
+    };
+
+    console.log("📨 Buscando ofertas na API Latam...");
+    const response = await fetch(offersUrl, {
+      method: "GET",
+      headers: headers,
+      timeout: 30000,
+    });
+
+    console.log("📊 Status da API:", response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Erro na API:", response.status, errorText);
+      throw new Error(`API Latam retornou erro ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log("✅ Voos encontrados:", data.content?.length || 0);
+
+    res.json({
+      success: true,
+      data: data,
       metadata: {
-        length: html.length,
-        hasSearchToken: hasSearchToken,
-        token: token,
-        status: latamResponse.status,
+        origin,
+        destination,
+        outbound,
+        inbound,
+        totalFlights: data.content?.length || 0,
         timestamp: new Date().toISOString(),
       },
     });
   } catch (error) {
-    console.error("💥 Erro:", error);
+    console.error("💥 Erro na busca de voos:", error);
     res.status(500).json({
+      success: false,
       error: error.message,
+      data: null,
     });
   }
 });
 
-// Rota alternativa apenas para o token
-app.get("/api/token", async (req, res) => {
+// 3. ROTA COMPLETA (TOKEN + BUSCA)
+app.post("/api/complete-search", async (req, res) => {
   try {
-    console.log("🔍 Extraindo apenas o token...");
+    const searchParams = req.body;
+    console.log("🚀 Iniciando busca completa...", searchParams);
 
-    const latamUrl =
-      "https://www.latamairlines.com/br/pt/oferta-voos?origin=BSB&outbound=2025-11-17T00%3A00%3A00.000Z&destination=GRU&inbound=2025-11-21T00%3A00%3A00.000Z&adt=1&chd=0&inf=0&trip=RT&cabin=Economy&sort=RECOMMENDED";
+    // 1. Obter token
+    const tokenResponse = await fetch(
+      `http://localhost:${PORT}/api/get-token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(searchParams),
+      }
+    );
 
-    const headers = {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    };
+    const tokenResult = await tokenResponse.json();
 
-    const latamResponse = await fetch(latamUrl, {
-      method: "GET",
-      headers: headers,
-      timeout: 30000,
-    });
-
-    if (!latamResponse.ok) {
-      throw new Error(`HTTP ${latamResponse.status}`);
+    if (!tokenResult.success) {
+      throw new Error(`Falha ao obter token: ${tokenResult.error}`);
     }
 
-    const html = await latamResponse.text();
-    const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
+    // 2. Buscar voos com o token
+    const flightsResponse = await fetch(
+      `http://localhost:${PORT}/api/search-flights`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...searchParams,
+          searchToken: tokenResult.token,
+        }),
+      }
+    );
 
-    if (tokenMatch && tokenMatch[1]) {
-      const token = tokenMatch[1];
-      console.log("✅ Token extraído:", token.substring(0, 50) + "...");
+    const flightsResult = await flightsResponse.json();
 
-      res.json({
-        token: token,
-      });
-    } else {
-      throw new Error("Token não encontrado no HTML");
-    }
+    res.json(flightsResult);
   } catch (error) {
-    console.error("❌ Erro:", error);
+    console.error("💥 Erro na busca completa:", error);
     res.status(500).json({
-      token: null,
+      success: false,
       error: error.message,
     });
   }
 });
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Iniciar servidor
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📍 Endpoints:`);
-  console.log(`   → GET /api/test-direct - HTML completo`);
-  console.log(`   → GET /api/token - Apenas o token`);
-  console.log(`   → GET /health - Health check`);
+  console.log(`🚀 Railway API rodando na porta ${PORT}`);
+  console.log(`📌 Endpoints:`);
+  console.log(`   → POST /api/get-token`);
+  console.log(`   → POST /api/search-flights`);
+  console.log(`   → POST /api/complete-search`);
 });
