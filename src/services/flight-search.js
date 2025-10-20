@@ -3,27 +3,43 @@ import { TokenManager, UrlBuilder } from "../lib/api-utils.js";
 import fetch from "node-fetch";
 
 export class FlightSearchService {
-  static USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  static USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
 
-  // BUSCA DIRETA DA LATAM (Método principal no Railway)
+  // BUSCA VIA RAILWAY PROXY (MÉTODO PRINCIPAL)
   static async searchFlightsWithRailway(searchParams) {
     console.log("🚄 INICIANDO BUSCA DIRETA DA LATAM (Railway)");
 
     const { origin, destination, departureDate, returnDate, passengerDetails } =
       searchParams;
 
+    // Extrai códigos dos aeroportos
+    const extractCode = (location) => {
+      if (!location) return "";
+      const match = location.match(/\(([A-Z]{3})\)/);
+      return match
+        ? match[1]
+        : /^[A-Z]{3}$/.test(location)
+        ? location
+        : location.slice(-3);
+    };
+
+    const originCode = extractCode(origin);
+    const destinationCode = extractCode(destination);
+
+    if (!originCode || !destinationCode) {
+      throw new Error("Códigos de aeroporto inválidos");
+    }
+
     console.log("🎯 Buscando voos:", {
-      origem: origin,
-      destino: destination,
+      origem: originCode,
+      destino: destinationCode,
       dataIda: departureDate,
       dataVolta: returnDate,
       passageiros: passengerDetails,
     });
 
+    // NO RAILWAY, FAZEMOS A BUSCA DIRETA NA LATAM
     let tokenData = TokenManager.getToken();
-
-    console.log("🔍 Token atual:", tokenData ? "Encontrado" : "Não encontrado");
 
     if (!tokenData || this.isTokenExpired(tokenData)) {
       console.log("🔄 Obtendo novo token...");
@@ -35,14 +51,33 @@ export class FlightSearchService {
       throw new Error("Não foi possível obter o token de busca");
     }
 
-    console.log("✅ Token válido obtido");
     return await this.getFlightApiOffersWithFetch(
       searchParams,
       tokenData.searchToken
     );
   }
 
-  // MÉTODO PARA OBTER TOKEN (ATUALIZADO)
+  // Método original para busca direta (fallback)
+  static async searchFlightsDirect(searchParams) {
+    console.log("✈️ Iniciando busca direta...", searchParams);
+
+    let tokenData = TokenManager.getToken();
+    console.log("🔄 Obtendo novo token...");
+
+    await this.getUrlSearchToken(searchParams);
+    tokenData = TokenManager.getToken();
+
+    if (!tokenData) {
+      throw new Error("Não foi possível obter o token de busca");
+    }
+
+    return await this.getFlightApiOffersWithFetch(
+      searchParams,
+      tokenData.searchToken
+    );
+  }
+
+  // Mantém todos os métodos originais para fallback
   static async getUrlSearchToken(searchParams) {
     console.log("🔄 Obtendo novo searchToken...");
 
@@ -51,72 +86,37 @@ export class FlightSearchService {
 
     const headers = {
       "User-Agent": this.USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
       "Accept-Encoding": "gzip, deflate, br",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "Upgrade-Insecure-Requests": "1",
-      "Sec-Fetch-Dest": "document",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Site": "none",
-      "Sec-Fetch-User": "?1",
-      "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
     };
 
     console.log("📋 Fazendo requisição para obter token...");
+    const response = await fetch(searchUrl, {
+      method: "GET",
+      headers: headers,
+    });
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    if (!response.ok) {
+      throw new Error(`Erro na requisição: ${response.status}`);
+    }
 
-    try {
-      const response = await fetch(searchUrl, {
-        method: "GET",
-        headers: headers,
-        signal: controller.signal,
-        redirect: "follow",
-      });
+    const html = await response.text();
+    console.log("✅ Resposta recebida, tamanho:", html.length);
 
-      clearTimeout(timeoutId);
+    const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
+    if (tokenMatch && tokenMatch[1]) {
+      const token = tokenMatch[1];
+      console.log("✅ SearchToken obtido:", token.substring(0, 50) + "...");
 
-      if (!response.ok) {
-        console.error("❌ Erro HTTP:", response.status, response.statusText);
-        throw new Error(
-          `Erro na requisição: ${response.status} ${response.statusText}`
-        );
-      }
-
-      const html = await response.text();
-      console.log("✅ Resposta recebida, tamanho:", html.length);
-
-      const tokenMatch = html.match(/"searchToken":"([^"]*)"/);
-      if (tokenMatch && tokenMatch[1]) {
-        const token = tokenMatch[1];
-        console.log("✅ SearchToken obtido:", token.substring(0, 50) + "...");
-
-        TokenManager.setToken(token);
-        return token;
-      } else {
-        console.error("❌ Token não encontrado na resposta");
-        // Log parcial da resposta para debug
-        console.log(
-          "📄 Primeiros 1000 chars da resposta:",
-          html.substring(0, 1000)
-        );
-        throw new Error("Token não encontrado na resposta");
-      }
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error.name === "AbortError") {
-        throw new Error("Timeout ao obter token (30s)");
-      }
-      throw error;
+      TokenManager.setToken(token);
+      return token;
+    } else {
+      throw new Error("Token não encontrado na resposta");
     }
   }
 
-  // BUSCA DE OFERTAS COM TOKEN (HEADERS ATUALIZADOS)
   static async getFlightApiOffersWithFetch(searchParams, searchToken) {
     console.log("🔍 Buscando ofertas com fetch...");
 
@@ -133,23 +133,20 @@ export class FlightSearchService {
 
     const refererWithExpId = `${refererUrl}&exp_id=${expId}`;
 
-    // HEADERS ATUALIZADOS - Mais realistas
     const headers = {
-      authority: "www.latamairlines.com",
       accept: "application/json, text/plain, */*",
-      "accept-language": "pt-BR,pt;q=0.9,en;q=0.8",
-      "cache-control": "no-cache",
-      origin: "https://www.latamairlines.com",
-      pragma: "no-cache",
+      "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      priority: "u=1, i",
       referer: refererWithExpId,
       "sec-ch-ua":
-        '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
       "sec-ch-ua-mobile": "?0",
       "sec-ch-ua-platform": '"Windows"',
       "sec-fetch-dest": "empty",
       "sec-fetch-mode": "cors",
       "sec-fetch-site": "same-origin",
-      "user-agent": this.USER_AGENT,
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
       "x-latam-action-name": "search-result.flightselection.offers-search",
       "x-latam-app-session-id": sessionId,
       "x-latam-application-country": "BR",
@@ -157,121 +154,37 @@ export class FlightSearchService {
       "x-latam-application-name": "web-air-offers",
       "x-latam-application-oc": "br",
       "x-latam-client-name": "web-air-offers",
-      "x-latam-device-width": "1920",
+      "x-latam-device-width": "1746",
       "x-latam-request-id": requestId,
       "x-latam-search-token": searchToken,
       "x-latam-track-id": trackId,
-      Cookie: this.generateRealisticCookies(),
+      Cookie: this.generateCookies(),
     };
 
     console.log(
-      "📋 Headers configurados:", Object.keys(headers).length, "headers"
+      "📋 Headers configurados:",
+      Object.keys(headers).length,
+      "headers"
     );
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    console.log("📋 Fazendo requisição para ofertas...");
+    const response = await fetch(offersUrl, {
+      method: "GET",
+      headers: headers,
+    });
 
-    try {
-      console.log("📋 Fazendo requisição para ofertas...");
-      const response = await fetch(offersUrl, {
-        method: "GET",
-        headers: headers,
-        signal: controller.signal,
-        redirect: "follow",
-      });
-
-      clearTimeout(timeoutId);
-
-      console.log("📊 Status da resposta:", response.status);
-      console.log("📊 Headers da resposta:", Object.fromEntries(response.headers.entries())
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ Erro HTTP:", response.status, response.statusText);
-        console.error("❌ Corpo do erro:", errorText.substring(0, 500));
-
-        if (response.status === 418) {
-          throw new Error("Acesso bloqueado pela LATAM (Erro 418). Tente novamente mais tarde.");
-        }
-
-        throw new Error(
-          `Erro na busca de ofertas: ${response.status} ${response.statusText}`
-        );
-      }
-
-      const data = await response.text();
-      console.log("✅ Busca concluída com sucesso");
-      console.log(
-        "📦 Dados retornados (primeiros 500 chars):",
-        data.substring(0, 500) + "..."
-      );
-
-      return this.parseOffersResponse(data);
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error.name === "AbortError") {
-        throw new Error("Timeout na busca de ofertas (30s)");
-      }
-
-      throw error;
+    if (!response.ok) {
+      throw new Error(`Erro na busca de ofertas: ${response.status}`);
     }
+
+    const data = await response.text();
+    console.log("✅ Busca concluída com sucesso");
+    console.log("📦 Dados retornados:", data.substring(0, 200) + "...");
+
+    return this.parseOffersResponse(data);
   }
 
-  // COOKIES MAIS REALISTAS
-  static generateRealisticCookies() {
-    const cookies = [
-      `_abck=${this.generateRandomString(400)}`,
-      `bm_sz=${this.generateRandomString(100)}`,
-      `_xp_exp_id=${this.generateUUID()}`,
-      `_xp_session=s%3A${this.generateRandomString(
-        84
-      )}.${this.generateRandomString(84)}`,
-      `ak_bmsc=${this.generateRandomString(200)}`,
-      `bm_sv=${this.generateRandomString(200)}`,
-    ].join("; ");
-
-    return cookies;
-  }
-
-  // MÉTODOS AUXILIARES (mantenha os existentes)
-  static generateRandomString(length) {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }
-
-  static generateUUID() {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
-      /[xy]/g,
-      function (c) {
-        const r = (Math.random() * 16) | 0;
-        const v = c == "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      }
-    );
-  }
-
-  static isTokenExpired(tokenData) {
-    const now = Math.floor(Date.now() / 1000);
-    const isExpired = tokenData.exp < now;
-    console.log("⏰ Token expirado?",
-      isExpired,
-      "(exp:",
-      tokenData.exp,
-      "now:",
-      now,
-      ")"
-    );
-    return isExpired;
-  }
-
-  // MÉTODOS AUXILIARES
+  // Métodos auxiliares (mantidos do código original)
   static generateCookies() {
     const abck = this.generateRandomString(500);
     const xpExpId = this.generateUUID();
@@ -302,6 +215,21 @@ export class FlightSearchService {
         return v.toString(16);
       }
     );
+  }
+
+  static isTokenExpired(tokenData) {
+    const now = Math.floor(Date.now() / 1000);
+    const isExpired = tokenData.exp < now;
+    console.log(
+      "⏰ Token expirado?",
+      isExpired,
+      "(exp:",
+      tokenData.exp,
+      "now:",
+      now,
+      ")"
+    );
+    return isExpired;
   }
 
   static parseOffersResponse(data) {
@@ -335,17 +263,16 @@ export class FlightSearchService {
   static transformToFlight(offer, index) {
     const summary = offer.summary;
 
-    console.log(
-      "📋 Processando voo",
-      index,
-      "- Summary:",
-      summary ? "OK" : "N/A"
-    );
+    //console.log("SUMMARY:", summary);
 
     const milesPrice = summary.brands?.[0]?.price?.amount ?? 0;
+    //console.log("MILES PRICE:", milesPrice);
+
     const cashPrice =
       (summary.brands?.[0]?.priceWithOutTax?.amount ?? 0) +
       (summary.brands?.[0]?.taxes?.amount ?? 0);
+    //console.log("CASH PRICE:", cashPrice);
+
     const stopOvers = offer.summary.stopOvers || 0;
     const totalDurationFormatted = this.formatDuration(summary.duration);
 
@@ -360,7 +287,7 @@ export class FlightSearchService {
     const airline = this.convertAirlineType(summary.airline || "LATAM");
     const sellers = this.generateMockSellers(index);
 
-    const flight = new Flight({
+    return new Flight({
       id: `flight-${index}-${Date.now()}`,
       airline,
       stopOvers,
@@ -385,16 +312,6 @@ export class FlightSearchService {
       brands: offer.brands,
       totalDurationFormatted,
     });
-
-    console.log(
-      `✈️ Voo ${index} processado:`,
-      flight.origin,
-      "→",
-      flight.destination,
-      "-",
-      flight.airline
-    );
-    return flight;
   }
 
   static extractTime(dateTimeString) {
