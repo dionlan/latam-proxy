@@ -3,6 +3,7 @@ import cors from "cors";
 import tokenRoutes from "./src/api/token/oferta-voos.js";
 import searchRoutes from "./src/api/search/search.js";
 import completeSearchRoutes from "./src/api/complete-search.js";
+import helmet from 'helmet';
 
 // Carrega variáveis de ambiente (apenas para desenvolvimento)
 import dotenv from "dotenv";
