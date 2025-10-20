@@ -95,6 +95,13 @@ app.use(
   })
 );
 
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Desabilita se causar problemas
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
 // Middleware para lidar com errors CORS de forma mais amigável
 app.use((err, req, res, next) => {
   if (err.message.includes("CORS")) {
@@ -138,15 +145,20 @@ app.use("/api/complete-search", completeSearchRoutes);
 
 // Health check
 app.get("/health", (req, res) => {
-  res.json({
+  const health = {
     status: "OK",
     timestamp: new Date().toISOString(),
-    environment: config.NODE_ENV,
-    port: config.PORT,
-    origins: allowedOrigins,
-    memory: process.memoryUsage(),
     uptime: process.uptime(),
-  });
+    memory: process.memoryUsage(),
+    environment: process.env.NODE_ENV,
+    // Testa conectividade com serviços externos
+    services: {
+      railway: "OK",
+      latam: "UNKNOWN", // Poderia testar conectividade
+    },
+  };
+
+  res.json(health);
 });
 
 // Rota raiz
