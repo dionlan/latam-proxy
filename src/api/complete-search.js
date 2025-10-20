@@ -9,8 +9,7 @@ router.post("/", async (req, res) => {
 
   try {
     console.log("🚀 RECEBIDA REQUISIÇÃO DE BUSCA COMPLETA");
-    console.log("📋 Headers:", req.headers);
-    console.log("📦 Body completo:", JSON.stringify(req.body, null, 2));
+    console.log("📋 Body completo:", JSON.stringify(req.body, null, 2));
 
     const { origin, destination, outbound, inbound, adults, children, babies } =
       req.body;
@@ -24,16 +23,6 @@ router.post("/", async (req, res) => {
           "Parâmetros obrigatórios faltando: origin, destination, outbound",
       });
     }
-
-    console.log("✅ Parâmetros validados:", {
-      origin,
-      destination,
-      outbound,
-      inbound,
-      adults,
-      children,
-      babies,
-    });
 
     const searchParams = new FlightSearch({
       origin: `${origin} (${origin})`,
@@ -54,7 +43,6 @@ router.post("/", async (req, res) => {
       JSON.stringify(searchParams, null, 2)
     );
 
-    // Usa o método que já inclui fallback
     const flights = await FlightSearchService.searchFlightsWithRailway(
       searchParams
     );
@@ -80,13 +68,26 @@ router.post("/", async (req, res) => {
     const endTime = Date.now();
     console.error(
       `❌ ERRO NA BUSCA COMPLETA (${endTime - startTime}ms):`,
-      error
+      error.message
     );
 
-    res.status(500).json({
+    // Resposta de erro mais informativa
+    let statusCode = 500;
+    let errorMessage = error.message;
+
+    if (error.message.includes("418") || error.message.includes("bloqueado")) {
+      statusCode = 429; // Too Many Requests
+      errorMessage =
+        "Acesso temporariamente bloqueado pela LATAM. Tente novamente em alguns minutos.";
+    } else if (error.message.includes("Timeout")) {
+      statusCode = 504; // Gateway Timeout
+      errorMessage = "Tempo limite excedido na busca. Tente novamente.";
+    }
+
+    res.status(statusCode).json({
       success: false,
       data: null,
-      error: error.message,
+      error: errorMessage,
       searchTime: endTime - startTime,
     });
   }
