@@ -4,11 +4,16 @@ import { TokenData, ApiSearchParams } from "./types.js";
 const tokenStorage = new Map();
 
 export class TokenManager {
-  static getToken() {
-    const tokenData = tokenStorage.get("latam_search_token");
-    console.log("🔍 Token recuperado:", tokenData ? "SIM" : "NÃO");
-    return tokenData || null;
-  }
+  static TOKEN_KEY = 'latam_search_token';
+
+    static getToken() {
+        if (typeof window === 'undefined') {
+            return tokenStorage.get(this.TOKEN_KEY) || null;
+        } else {
+            const tokenStr = localStorage.getItem(this.TOKEN_KEY);
+            return tokenStr ? JSON.parse(tokenStr) : null;
+        }
+    }
 
   static setToken(token) {
     const tokenData = new TokenData(
@@ -16,7 +21,12 @@ export class TokenManager {
       Math.floor(Date.now() / 1000) + 3500 // 58 minutos
     );
 
-    tokenStorage.set("latam_search_token", tokenData);
+    if (typeof window === 'undefined') {
+        tokenStorage.set(this.TOKEN_KEY, tokenData);
+    } else {
+        localStorage.setItem(this.TOKEN_KEY, JSON.stringify(tokenData));
+    }
+
     console.log(
       "✅ Token salvo, expira em:",
       new Date(tokenData.exp * 1000).toISOString()
@@ -31,7 +41,11 @@ export class TokenManager {
   }
 
   static clearToken() {
-    tokenStorage.delete("latam_search_token");
+    if (typeof window === 'undefined') {
+        tokenStorage.delete(this.TOKEN_KEY);
+    } else {
+        localStorage.removeItem(this.TOKEN_KEY);
+    }
     console.log("🗑️ Token limpo");
   }
 }
@@ -91,7 +105,7 @@ export class UrlBuilder {
       trip: tripType === "roundtrip" ? "RT" : "OW",
       cabin: "Economy",
       redemption: false,
-      sort: "DEPARTURE_DATE",
+      sort: "RECOMMENDED",
     });
 
     if (tripType === "roundtrip" && returnDate) {
@@ -136,7 +150,7 @@ export class UrlBuilder {
       outOfferId: "null",
       infant: passengerDetails.babies || 0,
       inFrom: tripType === "roundtrip" && returnDate ? returnDate : "null",
-      sort: "DEPARTURE_DATE",
+      sort: "RECOMMENDED",
       cabinType: "Economy",
       child: passengerDetails.children || 0,
       destination: destinationCode,

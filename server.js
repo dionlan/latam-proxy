@@ -10,13 +10,21 @@ if (process.env.NODE_ENV !== "production") {
   dotenv.config();
 }
 
-// Configurações com fallbacks robustos
+// Configurações com fallbacks robustos E tratamento de erro
 const config = {
   NODE_ENV: process.env.NODE_ENV || "production",
   PORT: process.env.PORT || 3001,
-  ALLOWED_ORIGINS:
+  // CORREÇÃO: Limpa e formata corretamente os origins
+  ALLOWED_ORIGINS: (
     process.env.ALLOWED_ORIGINS ||
-    "https://viajante-de-plantao.vercel.app,http://localhost:3000",
+    "https://viajante-de-plantao.vercel.app,http://localhost:3000"
+  )
+    .replace(/'/g, "") // Remove aspas simples
+    .replace(/\|\|/g, ",") // Substitui || por vírgula
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0)
+    .join(","),
   ENABLE_LOGGING: process.env.ENABLE_LOGGING || "true",
   DEBUG: process.env.DEBUG || "true",
 };
@@ -32,28 +40,73 @@ console.log("   DEBUG:", config.DEBUG);
 const app = express();
 const PORT = config.PORT;
 
-// Middleware CORS com fallback
-const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((origin) =>
-  origin.trim()
-);
-console.log("🌐 Origins permitidos:", allowedOrigins);
+// CORREÇÃO: Processamento robusto dos origins permitidos
+let allowedOrigins;
+try {
+  allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((origin) =>
+    origin.trim()
+  );
+  console.log("🌐 Origins permitidos processados:", allowedOrigins);
+} catch (error) {
+  console.error(
+    "❌ Erro ao processar ALLOWED_ORIGINS, usando fallback:",
+    error
+  );
+  allowedOrigins = [
+    "https://viajante-de-plantao.vercel.app",
+    "http://localhost:3000",
+  ];
+}
 
+// Middleware CORS com fallback robusto
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Permite requests sem origin (como mobile apps ou curl)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.indexOf(origin) === -1) {
-        const msg = `Origin ${origin} não permitida pelo CORS`;
-        console.log("🚫 CORS bloqueado:", origin);
-        return callback(new Error(msg), false);
+      // Permite requests sem origin (como mobile apps, curl, etc)
+      if (!origin) {
+        console.log("🔓 Request sem origin - Permitido");
+        return callback(null, true);
       }
-      return callback(null, true);
+
+      // Verifica se o origin está na lista permitida
+      const isAllowed = allowedOrigins.some((allowedOrigin) => {
+        // Comparação flexível para lidar com diferentes formatos
+        return (
+          origin === allowedOrigin ||
+          origin.replace(/\/$/, "") === allowedOrigin.replace(/\/$/, "")
+        );
+      });
+
+      if (isAllowed) {
+        console.log("✅ Origin permitido:", origin);
+        return callback(null, true);
+      } else {
+        console.log("🚫 Origin bloqueado:", origin);
+        console.log("📋 Origins esperados:", allowedOrigins);
+        return callback(
+          new Error(`Origin ${origin} não permitida pelo CORS`),
+          false
+        );
+      }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
   })
 );
+
+// Middleware para lidar com errors CORS de forma mais amigável
+app.use((err, req, res, next) => {
+  if (err.message.includes("CORS")) {
+    console.log("🌐 Erro CORS tratado:", err.message);
+    return res.status(403).json({
+      success: false,
+      error: "Acesso não permitido por política CORS",
+      message: err.message,
+    });
+  }
+  next(err);
+});
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -118,7 +171,7 @@ app.get("/", (req, res) => {
 
 // Error handling middleware
 app.use((error, req, res, next) => {
-  console.error("❌ Erro não tratado:", error);
+  console.error("❌ Erro não tratado:", error.message);
   res.status(500).json({
     success: false,
     error: "Erro interno do servidor",

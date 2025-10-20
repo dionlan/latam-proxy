@@ -36,7 +36,7 @@ export class ApiSearchParams {
     this.trip = data.trip || "RT";
     this.cabin = data.cabin || "Economy";
     this.redemption = data.redemption || false;
-    this.sort = data.sort || "DEPARTURE_DATE";
+    this.sort = data.sort || "RECOMMENDED";
   }
 }
 
