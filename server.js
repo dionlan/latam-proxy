@@ -138,27 +138,22 @@ app.use("*", (req, res) => {
 });
 
 // Tratamento de erro não capturado
-process.on("uncaughtException", (error) => {
-  console.error("💥 ERRO NÃO CAPTURADO (uncaughtException):", error);
-  process.exit(1);
+process.on('uncaughtException', (error) => {
+    console.error('💥 ERRO NÃO CAPTURADO (uncaughtException):', error);
+    process.exit(1);
 });
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error(
-    "💥 PROMISE REJEITADA NÃO TRATADA (unhandledRejection):",
-    reason
-  );
-  process.exit(1);
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 PROMISE REJEITADA NÃO TRATADA (unhandledRejection):', reason);
+    process.exit(1);
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor LATAM Proxy rodando na porta ${PORT}`);
-  console.log(`🌍 Ambiente: ${config.NODE_ENV}`);
-  console.log(
-    `🔗 Health check: https://latam-proxy-production.up.railway.app/health`
-  );
-  console.log(`🌐 Origins permitidos: ${allowedOrigins.join(", ")}`);
-  console.log(`📊 Logging: ${config.ENABLE_LOGGING}`);
+    console.log(`🚀 Servidor LATAM Proxy rodando na porta ${PORT}`);
+    console.log(`🌍 Ambiente: ${config.NODE_ENV}`);
+    console.log(`🔗 Health check: https://latam-proxy-production.up.railway.app/health`);
+    console.log(`🌐 Origins permitidos: ${allowedOrigins.join(', ')}`);
+    console.log(`📊 Logging: ${config.ENABLE_LOGGING}`);
 });
 
 app.listen(PORT, () => {
