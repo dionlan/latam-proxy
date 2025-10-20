@@ -69,25 +69,10 @@ export class Flight {
   }
 }
 
-export class LatamApiResponse {
-  constructor(data = {}) {
-    this.content = data.content || [];
-    this.totalElements = data.totalElements || 0;
-    this.totalPages = data.totalPages || 0;
-  }
-}
-
 export class LatamFlightOffer {
   constructor(data = {}) {
     this.summary = data.summary || {};
     this.itinerary = data.itinerary || [];
     this.brands = data.brands || [];
-  }
-}
-
-// Request interfaces
-export class RequestHeaders {
-  constructor(headers = {}) {
-    Object.assign(this, headers);
   }
 }
