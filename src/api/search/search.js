@@ -67,7 +67,7 @@ router.post("/", async (req, res) => {
 // Rota GET para busca de voos via query params
 router.get("/bff/air-offers/v2/offers/search", async (req, res) => {
   try {
-    console.log("✈️ Recebida requisição de busca de voos");
+    console.log("🔍 Recebida requisição GET direta para ofertas");
     console.log("📋 Query params:", req.query);
 
     const searchParams = new FlightSearch({
@@ -83,19 +83,30 @@ router.get("/bff/air-offers/v2/offers/search", async (req, res) => {
       },
     });
 
-    const flights = await FlightSearchService.searchFlights(searchParams);
+    console.log("🎯 Parâmetros convertidos:", searchParams);
 
+    // Usa a busca direta da LATAM
+    const flights = await FlightSearchService.searchFlightsWithRailway(
+      searchParams
+    );
+
+    console.log(`✅ Busca GET concluída: ${flights.length} voos encontrados`);
+
+    // Retorna no formato esperado pela API original
     res.json({
+      content: flights,
+      totalElements: flights.length,
+      totalPages: 1,
       success: true,
-      data: flights,
-      error: null,
     });
   } catch (error) {
-    console.error("❌ Erro na busca de voos:", error);
+    console.error("❌ Erro na busca GET:", error);
     res.status(500).json({
       success: false,
-      data: null,
       error: error.message,
+      content: [],
+      totalElements: 0,
+      totalPages: 0,
     });
   }
 });
