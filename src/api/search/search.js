@@ -9,8 +9,10 @@ router.get("/bff/air-offers/v2/offers/search", async (req, res) => {
   const startTime = Date.now();
 
   try {
-    console.log("🔍 RECEBIDA REQUISIÇÃO GET PARA OFERTAS");
-    console.log("📋 Query params:", req.query);
+    console.log("🔍 RECEBIDA REQUISIÇÃO DE BUSCA - Railway");
+    console.log("📋 Query parameters:", req.query);
+    console.log("🌐 Origin:", req.headers.origin);
+    console.log("📧 Headers:", req.headers);
 
     // Validação básica
     if (!req.query.origin || !req.query.destination || !req.query.outFrom) {
