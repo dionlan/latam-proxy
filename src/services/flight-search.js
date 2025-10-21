@@ -1,5 +1,5 @@
-import { FlightSearch, TokenData, Flight, LatamFlightOffer } from '../lib/types.js';
-import { TokenManager, UrlBuilder } from '../lib/api-utils.js';
+import { Flight } from '../lib/types.js';
+import { UrlBuilder } from '../lib/api-utils.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
